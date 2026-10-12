@@ -3,10 +3,11 @@
 A small text-based town: one local Qwen model serves multiple characters,
 hosted Jev interprets permission and police evidence, and Python owns the world.
 
-**Configuration loading is implemented.** Model clients, town data, world
+**Configuration loading and standalone Qwen/Jev connection checks are
+implemented.** Character reasoning, institutional judgments, town data, world
 actions, CLI handlers, and persistence remain placeholders. Unimplemented
 functions currently return `None`; their return annotations describe intended
-contracts. No simulation or inference calls run yet.
+contracts. The town simulation does not run yet.
 
 ## Windows setup
 
@@ -23,7 +24,9 @@ a different Ollama model. `load_settings()` reads and validates these values.
 Installing dependencies prepares your environment; it does not run the town.
 
 The dependencies match the planned stack: `ollama`, `typesafe-sdk`, `pydantic`,
-and `python-dotenv`. No SDK methods have been assumed or implemented.
+and `python-dotenv`, with `httpx` for Ollama transport-error handling. Any Python
+3.12 or newer works; use the full interpreter path if the `py` launcher is
+unavailable.
 
 ## Configuration
 
@@ -46,7 +49,7 @@ use defaults. Values are literal: `${VARIABLE}` interpolation is disabled.
 Relative data paths resolve against the project directory, independent of the
 current working directory. Pass `load_settings(project_dir=Path(...))` to use
 another directory for both `.env` and relative data paths. The key is optional
-for local Qwen work; the future Jev check must require it. It is excluded from
+for local Qwen work; the Jev check requires it. It is excluded from
 settings representations and serialization. `ConfigurationError` reports
 invalid variable names and requirements without including supplied values.
 
@@ -62,12 +65,119 @@ Run the offline configuration tests:
 .\.venv\Scripts\python -m unittest discover -s tests -v
 ```
 
+These existing tests cover configuration only. Connection checks are verified
+with live requests; no client unit-test coverage has been added.
+
+## Live connection checks
+
+Copy `.env.example` to the ignored `.env` if you have not already done so.
+Set `OLLAMA_HOST` to a running Ollama server, set `QWEN_MODEL` to an already
+downloaded model, and add a valid `TYPESAFE_API_KEY` with Jev access. The
+configured request timeouts must be positive and finite. Keep your key in `.env`
+and never paste it into a command or commit it.
+
+From the project directory after installing dependencies, run this PowerShell
+example. It checks each service independently and closes each client even when
+its check fails:
+
+```powershell
+@'
+from qwensimul.config import load_settings
+from qwensimul.clients.qwen import QwenClient
+from qwensimul.clients.jev import JevClient
+
+settings = load_settings()
+key = settings.typesafe_api_key
+clients = [
+    QwenClient(
+        str(settings.ollama_host), settings.qwen_model,
+        settings.qwen_timeout_seconds,
+    ),
+    JevClient(
+        key.get_secret_value() if key is not None else None,
+        settings.jev_timeout_seconds,
+    ),
+]
+results = []
+for client in clients:
+    try:
+        result = client.check_connection()
+        results.append(result)
+        print(result.model_dump_json(), flush=True)
+    finally:
+        client.close()
+raise SystemExit(0 if all(result.success for result in results) else 1)
+'@ | .\.venv\Scripts\python -
+```
+
+There are no CLI commands yet. Call either client separately to check only that
+service. Constructors make no requests; the SDK is created lazily and reused.
+`close()` is idempotent, and checks after closing report `configuration_error`.
+
+Qwen first lists installed models, then sends one non-streaming chat request
+asking for `OK`, with thinking disabled and a 64-token output limit. Untagged
+model names mean `:latest`. The check never downloads models. Any completed
+response with nonempty visible text and model identity passes.
+
+Jev makes one Choice request about the statement "The described object is red"
+using `red` and `blue` options. It uses the official TypeSafe endpoint and
+`jev-latest` explicitly, with automatic retries disabled. A valid response must
+contain the named Choice answer, a supplied option, finite confidence and
+probabilities in `[0, 1]`, and probability totals within `0.001` of one. Either
+valid answer passes: this checks connectivity and response validity, not model
+accuracy. Invalid probabilities are rejected rather than repaired.
+
+Both adapters use the SDK interfaces documented by
+[Ollama](https://github.com/ollama/ollama-python) and
+[TypeSafe](https://docs.typesafe.ai/sdk/python/api/clients/sync).
+
+`check_connection()` returns a `ConnectionCheckResult` with these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `service`, `success` | Which service was checked and whether inference passed |
+| `elapsed_seconds` | Whole check duration, including SDK creation and model discovery |
+| `model` | Returned model identity, or `null` when unavailable |
+| `input_tokens`, `output_tokens` | Token counts when the service reports them |
+| `request_id` | Jev request ID when reported; otherwise `null` |
+| `error_code`, `message` | Failure category and a fixed, actionable message; successful checks have no error code |
+
+Reports exclude credentials, raw response bodies, headers, and exception text.
+Expected failures return reports; unexpected programming errors propagate.
+Timeouts apply per SDK request, not to the entire check. Qwen makes two requests
+when its model is available; Jev makes one inference request.
+
+| Failure code | Action |
+| --- | --- |
+| `configuration_error` | Check settings and the Jev key; create a new adapter if the client was closed |
+| `unreachable` | Check Ollama/server availability, network access, and outbound permissions |
+| `model_missing` | Download the configured model in Ollama yourself, then retry |
+| `timeout` | Check service responsiveness or increase the relevant timeout |
+| `authentication_failed`, `access_denied` | Check credentials and account access |
+| `rate_limited` | Wait before manually retrying |
+| `service_error`, `invalid_response` | Check service status and SDK compatibility |
+
+### Verified environment
+
+Live checks passed on 12 October 2026 with Python 3.13.9, `ollama` 0.6.3,
+`typesafe-sdk` 0.7.4, `httpx` 0.28.1, `pydantic` 2.14.1, and `python-dotenv`
+1.2.4. Dependencies are not pinned to these versions.
+
+| Service | Returned model | Outcome | Elapsed seconds |
+| --- | --- | --- | --- |
+| Qwen | `qwen3.5:4b` | Passed | 7.63 |
+| Jev | `jev-1.13.0` | Passed | 0.43 |
+
+The Jev check needed outbound network access outside the restricted execution
+environment. Timings describe these sample requests, not performance targets.
+
 ## Repository map
 
 | Path | Intended responsibility |
 | --- | --- |
 | `src/qwensimul/__main__.py` | Future terminal entry point |
 | `src/qwensimul/config.py` | Load and validate settings |
+| `src/qwensimul/clients/checks.py` | Shared safe connection-check reports |
 | `src/qwensimul/models.py` | Typed state, action, evidence, and result contracts |
 | `src/qwensimul/clients/qwen.py` | Shared local Ollama inference client |
 | `src/qwensimul/clients/jev.py` | Hosted Jev Choice adapter |

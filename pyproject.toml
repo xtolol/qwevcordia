@@ -10,6 +10,7 @@ description = "Skeleton for a local Qwen and hosted Jev town simulation"
 requires-python = ">=3.12"
 dependencies = [
     "ollama",
+    "httpx>=0.27,<1",
     "typesafe-sdk",
     "pydantic>=2,<3",
     "python-dotenv",
