@@ -1,0 +1,19 @@
+# Local environment and secrets.
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Python build and cache files.
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Future simulation outputs.
+data/logs/*
+!data/logs/.gitkeep
+data/snapshots/*
+!data/snapshots/.gitkeep

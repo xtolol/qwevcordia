@@ -1,0 +1,19 @@
+# Package metadata and dependencies only; no simulation is implemented.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qwensimul"
+version = "0.0.0"
+description = "Skeleton for a local Qwen and hosted Jev town simulation"
+requires-python = ">=3.12"
+dependencies = [
+    "ollama",
+    "typesafe-sdk",
+    "pydantic>=2,<3",
+    "python-dotenv",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
