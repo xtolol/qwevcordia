@@ -1,17 +1,11 @@
-# QwenSimul — early implementation
+# QwenSimul
 
-A small text-based town: one local Qwen model serves multiple characters,
-hosted Jev interprets permission and police evidence, and Python owns the world.
-
-**Configuration loading and standalone Qwen/Jev connection checks are
-implemented.** Character reasoning, institutional judgments, town data, world
-actions, CLI handlers, and persistence remain placeholders. Unimplemented
-functions currently return `None`; their return annotations describe intended
-contracts. The town simulation does not run yet.
+A small text-based town with Qwen characters and Jev judgments about permissions
+and reported incidents. The town simulation is not available yet.
 
 ## Windows setup
 
-Extract the ZIP, open PowerShell in the `qwensimul` folder, then run:
+Open PowerShell in the `qwensimul` folder, then run:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -19,207 +13,31 @@ py -3.12 -m venv .venv
 Copy-Item .env.example .env
 ```
 
-Add your real `TYPESAFE_API_KEY` to `.env`. Change `QWEN_MODEL` if you downloaded
-a different Ollama model. `load_settings()` reads and validates these values.
-Installing dependencies prepares your environment; it does not run the town.
-
-The dependencies match the planned stack: `ollama`, `typesafe-sdk`, `pydantic`,
-and `python-dotenv`, with `httpx` for Ollama transport-error handling. Any Python
-3.12 or newer works; use the full interpreter path if the `py` launcher is
-unavailable.
+Python 3.12 or newer is required. If the `py` launcher is unavailable, use the
+full path to your Python interpreter.
 
 ## Configuration
 
-`load_settings()` reads `.env` from the project directory containing this
-source checkout. Existing environment variables take precedence, including
-empty values. Loading settings does not change the process environment, create
-output directories, or contact either inference service. Missing `.env` files
-use defaults. Values are literal: `${VARIABLE}` interpolation is disabled.
+Edit `.env` with your settings. Add your `TYPESAFE_API_KEY`, ensure Ollama is
+running at `OLLAMA_HOST`, and set `QWEN_MODEL` to an already downloaded model.
+Keep your API key private; `.env` is ignored by Git.
 
-| Variable | Default | Validation |
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `OLLAMA_HOST` | `http://localhost:11434` | HTTP(S) URL without credentials, query, or fragment |
-| `QWEN_MODEL` | `qwen3.5:4b` | Nonempty model name |
-| `TYPESAFE_API_KEY` | Unset | Optional secret; blank means absent |
-| `MAX_ROUNDS` | `20` | Positive integer |
-| `DATA_DIR` | `data` | Nonempty path; an existing file is rejected |
-| `QWEN_TIMEOUT_SECONDS` | `120` | Positive, finite seconds |
-| `JEV_TIMEOUT_SECONDS` | `30` | Positive, finite seconds |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server address |
+| `QWEN_MODEL` | `qwen3.5:4b` | Installed Qwen model |
+| `TYPESAFE_API_KEY` | Unset | Required for the Jev endpoint check |
+| `QWEN_TIMEOUT_SECONDS` | `120` | Qwen request timeout in seconds |
+| `JEV_TIMEOUT_SECONDS` | `30` | Jev request timeout in seconds |
+| `MAX_ROUNDS` | `20` | Round limit for the future simulation |
+| `DATA_DIR` | `data` | Output directory for the future simulation |
 
-Relative data paths resolve against the project directory, independent of the
-current working directory. Pass `load_settings(project_dir=Path(...))` to use
-another directory for both `.env` and relative data paths. The key is optional
-for local Qwen work; the Jev check requires it. It is excluded from
-settings representations and serialization. `ConfigurationError` reports
-invalid variable names and requirements without including supplied values.
+Environment variables override `.env`. Timeouts and round limits must be
+positive; relative output paths use the project directory.
 
-To verify configuration from the project folder after installation:
+## Endpoint checks
 
-```powershell
-.\.venv\Scripts\python -c "from qwensimul.config import load_settings; print(load_settings())"
-```
-
-Run the offline configuration tests:
-
-```powershell
-.\.venv\Scripts\python -m unittest discover -s tests -v
-```
-
-These existing tests cover configuration only. Connection checks are verified
-with live requests; no client unit-test coverage has been added.
-
-## Live connection checks
-
-Copy `.env.example` to the ignored `.env` if you have not already done so.
-Set `OLLAMA_HOST` to a running Ollama server, set `QWEN_MODEL` to an already
-downloaded model, and add a valid `TYPESAFE_API_KEY` with Jev access. The
-configured request timeouts must be positive and finite. Keep your key in `.env`
-and never paste it into a command or commit it.
-
-From the project directory after installing dependencies, run this PowerShell
-example. It checks each service independently and closes each client even when
-its check fails:
-
-```powershell
-@'
-from qwensimul.config import load_settings
-from qwensimul.clients.qwen import QwenClient
-from qwensimul.clients.jev import JevClient
-
-settings = load_settings()
-key = settings.typesafe_api_key
-clients = [
-    QwenClient(
-        str(settings.ollama_host), settings.qwen_model,
-        settings.qwen_timeout_seconds,
-    ),
-    JevClient(
-        key.get_secret_value() if key is not None else None,
-        settings.jev_timeout_seconds,
-    ),
-]
-results = []
-for client in clients:
-    try:
-        result = client.check_connection()
-        results.append(result)
-        print(result.model_dump_json(), flush=True)
-    finally:
-        client.close()
-raise SystemExit(0 if all(result.success for result in results) else 1)
-'@ | .\.venv\Scripts\python -
-```
-
-There are no CLI commands yet. Call either client separately to check only that
-service. Constructors make no requests; the SDK is created lazily and reused.
-`close()` is idempotent, and checks after closing report `configuration_error`.
-
-Qwen first lists installed models, then sends one non-streaming chat request
-asking for `OK`, with thinking disabled and a 64-token output limit. Untagged
-model names mean `:latest`. The check never downloads models. Any completed
-response with nonempty visible text and model identity passes.
-
-Jev makes one Choice request about the statement "The described object is red"
-using `red` and `blue` options. It uses the official TypeSafe endpoint and
-`jev-latest` explicitly, with automatic retries disabled. A valid response must
-contain the named Choice answer, a supplied option, finite confidence and
-probabilities in `[0, 1]`, and probability totals within `0.001` of one. Either
-valid answer passes: this checks connectivity and response validity, not model
-accuracy. Invalid probabilities are rejected rather than repaired.
-
-Both adapters use the SDK interfaces documented by
-[Ollama](https://github.com/ollama/ollama-python) and
-[TypeSafe](https://docs.typesafe.ai/sdk/python/api/clients/sync).
-
-`check_connection()` returns a `ConnectionCheckResult` with these fields:
-
-| Field | Meaning |
-| --- | --- |
-| `service`, `success` | Which service was checked and whether inference passed |
-| `elapsed_seconds` | Whole check duration, including SDK creation and model discovery |
-| `model` | Returned model identity, or `null` when unavailable |
-| `input_tokens`, `output_tokens` | Token counts when the service reports them |
-| `request_id` | Jev request ID when reported; otherwise `null` |
-| `error_code`, `message` | Failure category and a fixed, actionable message; successful checks have no error code |
-
-Reports exclude credentials, raw response bodies, headers, and exception text.
-Expected failures return reports; unexpected programming errors propagate.
-Timeouts apply per SDK request, not to the entire check. Qwen makes two requests
-when its model is available; Jev makes one inference request.
-
-| Failure code | Action |
-| --- | --- |
-| `configuration_error` | Check settings and the Jev key; create a new adapter if the client was closed |
-| `unreachable` | Check Ollama/server availability, network access, and outbound permissions |
-| `model_missing` | Download the configured model in Ollama yourself, then retry |
-| `timeout` | Check service responsiveness or increase the relevant timeout |
-| `authentication_failed`, `access_denied` | Check credentials and account access |
-| `rate_limited` | Wait before manually retrying |
-| `service_error`, `invalid_response` | Check service status and SDK compatibility |
-
-### Verified environment
-
-Live checks passed on 12 October 2026 with Python 3.13.9, `ollama` 0.6.3,
-`typesafe-sdk` 0.7.4, `httpx` 0.28.1, `pydantic` 2.14.1, and `python-dotenv`
-1.2.4. Dependencies are not pinned to these versions.
-
-| Service | Returned model | Outcome | Elapsed seconds |
-| --- | --- | --- | --- |
-| Qwen | `qwen3.5:4b` | Passed | 7.63 |
-| Jev | `jev-1.13.0` | Passed | 0.43 |
-
-The Jev check needed outbound network access outside the restricted execution
-environment. Timings describe these sample requests, not performance targets.
-
-## Repository map
-
-| Path | Intended responsibility |
-| --- | --- |
-| `src/qwensimul/__main__.py` | Future terminal entry point |
-| `src/qwensimul/config.py` | Load and validate settings |
-| `src/qwensimul/clients/checks.py` | Shared safe connection-check reports |
-| `src/qwensimul/models.py` | Typed state, action, evidence, and result contracts |
-| `src/qwensimul/clients/qwen.py` | Shared local Ollama inference client |
-| `src/qwensimul/clients/jev.py` | Hosted Jev Choice adapter |
-| `src/qwensimul/agents.py` | Character prompts and isolated memory |
-| `src/qwensimul/observations.py` | Visibility and reported evidence |
-| `src/qwensimul/world.py` | Deterministic validation and execution |
-| `src/qwensimul/institutions.py` | Permission and police judgments |
-| `src/qwensimul/scenarios.py` | Fixed initial town and policies |
-| `src/qwensimul/simulation.py` | Turns, rounds, pause, and reset |
-| `src/qwensimul/storage.py` | Snapshots, logs, and terminal events |
-| `data/logs/` | Future JSONL logs |
-| `data/snapshots/` | Future JSON snapshots |
-| `.env.example` | Configuration template without credentials |
-| `pyproject.toml` | Packaging and dependencies |
-
-## Suggested implementation order
-
-1. Implement `config.py` and standalone connection checks in both clients.
-2. Define typed contracts in `models.py` and a fixed town in `scenarios.py`.
-3. Implement and manually verify world actions before connecting agents.
-4. Add observations, private memories, and Qwen action proposals.
-5. Add Jev permission and police-evidence judgments.
-6. Wire the bounded simulation loop, persistence, and terminal controls.
-
-Before autonomous runs, verify money and item conservation, failed purchases,
-permission scope, witness visibility, and reset behavior. Add meaningful tests
-when these behaviors exist.
-
-## Initial scope
-
-Four characters (two residents, shopkeeper, police officer), three locations
-(square, shop, station), money, owned items, and at most 20 sequential rounds.
-Physical possession and legality are separate: an unauthorized taking may occur
-and later be reported. Police reason from reported evidence rather than hidden
-world truth.
-
-## Start your Git history locally
-
-```powershell
-git init
-git add .
-git commit -m "Add QwenSimul skeleton"
-```
-
-The ZIP excludes Git metadata. No remote repository has been created.
+The planned commands for testing Qwen and Jev are
+`.\.venv\Scripts\python -m qwensimul check qwen` and
+`.\.venv\Scripts\python -m qwensimul check jev`, respectively.
+These commands will be available when the terminal interface is added.
