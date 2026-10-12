@@ -1,12 +1,12 @@
-# QwenSimul — skeleton only
+# QwenSimul — early implementation
 
 A small text-based town: one local Qwen model serves multiple characters,
 hosted Jev interprets permission and police evidence, and Python owns the world.
 
-**No functionality is implemented.** Every function contains a docstring and
-`pass`; all data classes are placeholders. There are no model calls, state
-changes, CLI handlers, persistence operations, or tests. Stub return annotations
-describe intended contracts; the stubs currently return `None`.
+**Configuration loading is implemented.** Model clients, town data, world
+actions, CLI handlers, and persistence remain placeholders. Unimplemented
+functions currently return `None`; their return annotations describe intended
+contracts. No simulation or inference calls run yet.
 
 ## Windows setup
 
@@ -19,11 +19,48 @@ Copy-Item .env.example .env
 ```
 
 Add your real `TYPESAFE_API_KEY` to `.env`. Change `QWEN_MODEL` if you downloaded
-a different Ollama model. The skeleton does not read these values yet.
+a different Ollama model. `load_settings()` reads and validates these values.
 Installing dependencies prepares your environment; it does not run the town.
 
 The dependencies match the planned stack: `ollama`, `typesafe-sdk`, `pydantic`,
 and `python-dotenv`. No SDK methods have been assumed or implemented.
+
+## Configuration
+
+`load_settings()` reads `.env` from the project directory containing this
+source checkout. Existing environment variables take precedence, including
+empty values. Loading settings does not change the process environment, create
+output directories, or contact either inference service. Missing `.env` files
+use defaults. Values are literal: `${VARIABLE}` interpolation is disabled.
+
+| Variable | Default | Validation |
+| --- | --- | --- |
+| `OLLAMA_HOST` | `http://localhost:11434` | HTTP(S) URL without credentials, query, or fragment |
+| `QWEN_MODEL` | `qwen3.5:4b` | Nonempty model name |
+| `TYPESAFE_API_KEY` | Unset | Optional secret; blank means absent |
+| `MAX_ROUNDS` | `20` | Positive integer |
+| `DATA_DIR` | `data` | Nonempty path; an existing file is rejected |
+| `QWEN_TIMEOUT_SECONDS` | `120` | Positive, finite seconds |
+| `JEV_TIMEOUT_SECONDS` | `30` | Positive, finite seconds |
+
+Relative data paths resolve against the project directory, independent of the
+current working directory. Pass `load_settings(project_dir=Path(...))` to use
+another directory for both `.env` and relative data paths. The key is optional
+for local Qwen work; the future Jev check must require it. It is excluded from
+settings representations and serialization. `ConfigurationError` reports
+invalid variable names and requirements without including supplied values.
+
+To verify configuration from the project folder after installation:
+
+```powershell
+.\.venv\Scripts\python -c "from qwensimul.config import load_settings; print(load_settings())"
+```
+
+Run the offline configuration tests:
+
+```powershell
+.\.venv\Scripts\python -m unittest discover -s tests -v
+```
 
 ## Repository map
 
