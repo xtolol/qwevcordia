@@ -1,4 +1,4 @@
-# QwenSimul — skeleton only
+# Qwevcordia
 
 A small text-based town: one local Qwen model serves multiple characters,
 hosted Jev interprets permission and police evidence, and Python owns the world.
